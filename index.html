@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <!-- Este meta evita que el usuario haga zoom por error al tocar rápido el botón -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Radio Colectivos Móvil</title>
+    <style>
+        body { 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            justify-content: center; 
+            height: 100vh; 
+            margin: 0;
+            font-family: sans-serif; 
+            background: #1e222b; 
+            color: white;
+            /* Evita que se seleccione texto al mantener presionado el botón */
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        #pttBtn { 
+            width: 240px; /* Más grande para el dedo en el colectivo */
+            height: 240px; 
+            border-radius: 50%; 
+            border: 6px solid #4f5d73; 
+            background: #ff4757; 
+            color: white; 
+            font-size: 22px; 
+            font-weight: bold; 
+            cursor: pointer; 
+            box-shadow: 0 10px 25px rgba(0,0,0,0.4); 
+            outline: none; 
+            transition: all 0.1s ease;
+            -webkit-tap-highlight-color: transparent; /* Quita el cuadro azul feo en móviles */
+        }
+        /* Clase que aplicaremos por JavaScript cuando detectemos el toque */
+        .active { 
+            background: #ff6b81 !important; 
+            transform: scale(0.93); 
+            box-shadow: 0 5px 10px rgba(0,0,0,0.4) !important;
+            border-color: #ff4757 !important;
+        }
+        #status { 
+            margin-top: 35px; 
+            font-size: 20px; 
+            color: #a4b0be; 
+            font-weight: bold;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+    <button id="pttBtn">PRESIONA<br>PARA HABLAR</button>
+    <div id="status">Conectando al canal...</div>
+
+    <script>
+        const pttBtn = document.getElementById('pttBtn');
+        const statusDiv = document.getElementById('status');
+        
+        // Cambiaremos esto por la IP real o del servidor en la nube más adelante
+        const ws = new WebSocket('ws://localhost:8080');
+        let mediaRecorder;
+        let chunks = [];
+
+        ws.onopen = () => statusDiv.innerText = "📻 Canal Abierto";
+        ws.onerror = () => statusDiv.innerText = "❌ Error de conexión";
+        
+        ws.onmessage = async (event) => {
+            statusDiv.innerText = "🔊 Escuchando línea...";
+            const audioBlob = event.data;
+            const audioUrl = URL.createObjectURL(audioBlob);
+            const audio = new Audio(audioUrl);
+            
+            try {
+                await audio.play();
+            } catch (e) {
+                console.log("Audio bloqueado temporalmente por el navegador móvil.");
+            }
+
+            audio.onended = () => {
+                statusDiv.innerText = "📻 Canal Abierto";
+            };
+        };
+
+        navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+            mediaRecorder = new MediaRecorder(stream);
+
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data.size > 0) {
+                    chunks.push(event.data);
+                }
+            };
+
+            mediaRecorder.onstop = () => {
+                const audioBlob = new Blob(chunks, { type: 'audio/webm' });
+                chunks = [];
+                if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(audioBlob);
+                }
+            };
+
+            // Funciones de control de grabación
+            function iniciarGrabacion(e) {
+                e.preventDefault(); // Evita comportamientos raros del navegador móvil
+                if (mediaRecorder.state === "inactive") {
+                    chunks = [];
+                    mediaRecorder.start();
+                    pttBtn.classList.add('active');
+                    statusDiv.innerText = "🎙️ Transmitiendo...";
+                }
+            }
+
+            function detenerGrabacion(e) {
+                e.preventDefault();
+                if (mediaRecorder.state === "recording") {
+                    mediaRecorder.stop();
+                    pttBtn.classList.remove('active');
+                    statusDiv.innerText = "📻 Canal Abierto";
+                }
+            }
+
+            // SOPORTE PARA CELULARES (Eventos táctiles)
+            pttBtn.addEventListener('touchstart', iniciarGrabacion);
+            pttBtn.addEventListener('touchend', detenerGrabacion);
+
+            // SOPORTE PARA COMPUTADORA (Por si sigues probando en PC)
+            pttBtn.addEventListener('mousedown', iniciarGrabacion);
+            pttBtn.addEventListener('mouseup', detenerGrabacion);
+
+        }).catch(err => {
+            statusDiv.innerText = "⚠️ Activa el permiso del micrófono";
+            console.error(err);
+        });
+    </script>
+</body>
+</html>
