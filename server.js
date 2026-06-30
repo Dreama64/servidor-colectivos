@@ -9,12 +9,14 @@ const wss = new WebSocketServer({ port: PORT });
 wss.on('connection', (ws) => {
   console.log('📱 Chofer conectado al canal ✅');
 
-  ws.on('message', (audioData) => {
+  // Recibir audio y retransmitir forzando el formato binario puro
+  ws.on('message', (audioData, isBinary) => {
     console.log('🎙️ Audio recibido, transmitiendo a la línea...');
 
     wss.clients.forEach((client) => {
+      // Verificamos que no sea el mismo que mandó el audio y que la conexión esté abierta (1 = OPEN)
       if (client !== ws && client.readyState === 1) {
-        client.send(audioData);
+        client.send(audioData, { binary: isBinary });
       }
     });
   });

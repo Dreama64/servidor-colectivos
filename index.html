@@ -2,138 +2,128 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <!-- Este meta evita que el usuario haga zoom por error al tocar rápido el botón -->
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Radio Colectivos Móvil</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Central de Radio - Colectivos</title>
     <style>
-        body { 
-            display: flex; 
-            flex-direction: column; 
-            align-items: center; 
-            justify-content: center; 
-            height: 100vh; 
-            margin: 0;
-            font-family: sans-serif; 
-            background: #1e222b; 
-            color: white;
-            /* Evita que se seleccione texto al mantener presionado el botón */
-            user-select: none;
-            -webkit-user-select: none;
-        }
-        #pttBtn { 
-            width: 240px; /* Más grande para el dedo en el colectivo */
-            height: 240px; 
-            border-radius: 50%; 
-            border: 6px solid #4f5d73; 
-            background: #ff4757; 
-            color: white; 
-            font-size: 22px; 
-            font-weight: bold; 
-            cursor: pointer; 
-            box-shadow: 0 10px 25px rgba(0,0,0,0.4); 
-            outline: none; 
-            transition: all 0.1s ease;
-            -webkit-tap-highlight-color: transparent; /* Quita el cuadro azul feo en móviles */
-        }
-        /* Clase que aplicaremos por JavaScript cuando detectemos el toque */
-        .active { 
-            background: #ff6b81 !important; 
-            transform: scale(0.93); 
-            box-shadow: 0 5px 10px rgba(0,0,0,0.4) !important;
-            border-color: #ff4757 !important;
-        }
-        #status { 
-            margin-top: 35px; 
-            font-size: 20px; 
-            color: #a4b0be; 
-            font-weight: bold;
-            text-align: center;
-        }
+        body { font-family: Arial, sans-serif; background-color: #1e222b; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+        #btn-radio { width: 200px; height: 200px; border-radius: 50%; background-color: #2ed573; border: 6px solid #2f3542; color: white; font-size: 20px; font-weight: bold; cursor: pointer; outline: none; transition: background 0.2s, transform 0.1s; box-shadow: 0 8px 15px rgba(0,0,0,0.3); }
+        #btn-radio:active { background-color: #26af5f; transform: scale(0.96); }
+        #status { margin-top: 30px; font-size: 18px; color: #a4b0be; font-weight: bold; }
     </style>
 </head>
 <body>
 
-    <button id="pttBtn">PRESIONA<br>PARA HABLAR</button>
-    <div id="status">Conectando al canal...</div>
+    <button id="btn-radio">PRESIONA<br>PARA HABLAR</button>
+    <div id="status">Conectando a la red...</div>
 
     <script>
-        const pttBtn = document.getElementById('pttBtn');
         const statusDiv = document.getElementById('status');
+        const btnRadio = document.getElementById('btn-radio');
         
-        // Cambiaremos esto por la IP real o del servidor en la nube más adelante
-        const ws = new WebSocket('ws://localhost:8080');
+        // Dirección oficial de tu backend en Render
+        const ws = new WebSocket('wss://servidor-colectivos.onrender.com');
+        
         let mediaRecorder;
         let chunks = [];
 
-        ws.onopen = () => statusDiv.innerText = "📻 Canal Abierto";
-        ws.onerror = () => statusDiv.innerText = "❌ Error de conexión";
-        
-        ws.onmessage = async (event) => {
-            statusDiv.innerText = "🔊 Escuchando línea...";
-            const audioBlob = event.data;
-            const audioUrl = URL.createObjectURL(audioBlob);
-            const audio = new Audio(audioUrl);
-            
-            try {
-                await audio.play();
-            } catch (e) {
-                console.log("Audio bloqueado temporalmente por el navegador móvil.");
-            }
-
-            audio.onended = () => {
-                statusDiv.innerText = "📻 Canal Abierto";
-            };
+        ws.onopen = () => {
+            statusDiv.innerText = '📻 Conectado a la Central - Listo';
         };
 
-        navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
-            mediaRecorder = new MediaRecorder(stream);
+        ws.onclose = () => {
+            statusDiv.innerText = '⚠️ Desconectado. Reintentando...';
+        };
 
-            mediaRecorder.ondataavailable = (event) => {
-                if (event.data.size > 0) {
-                    chunks.push(event.data);
+        ws.onerror = (err) => {
+            console.error('Error WebSocket:', err);
+        };
+
+        // ESCUCHAR AL CELULAR (Esto ya te funciona)
+        ws.onmessage = async (event) => {
+            statusDiv.innerText = '🔊 Escuchando al chofer...';
+            try {
+                const audioBlob = event.data;
+                const audioUrl = URL.createObjectURL(audioBlob);
+                const audio = new Audio(audioUrl);
+                await audio.play();
+                audio.onended = () => {
+                    statusDiv.innerText = '📻 Conectado a la Central - Listo';
+                };
+            } catch (e) {
+                console.error('Error al reproducir audio en web:', e);
+                statusDiv.innerText = '📻 Conectado a la Central - Listo';
+            }
+        };
+
+        // TRANSMITIR HACIA EL CELULAR (Ajustado para compatibilidad móvil)
+        navigator.mediaDevices.getUserMedia({ audio: true })
+            .then(stream => {
+                // Forzamos un formato estándar que el decodificador del teléfono entienda sin problemas
+                let options = { mimeType: 'audio/webm;codecs=opus' };
+                if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                    options = { mimeType: 'audio/ogg;codecs=opus' };
                 }
-            };
-
-            mediaRecorder.onstop = () => {
-                const audioBlob = new Blob(chunks, { type: 'audio/webm' });
-                chunks = [];
-                if (ws.readyState === WebSocket.OPEN) {
-                    ws.send(audioBlob);
+                if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                    options = {}; // Si el navegador es antiguo usa la configuración por defecto
                 }
-            };
 
-            // Funciones de control de grabación
-            function iniciarGrabacion(e) {
-                e.preventDefault(); // Evita comportamientos raros del navegador móvil
-                if (mediaRecorder.state === "inactive") {
+                mediaRecorder = new MediaRecorder(stream, options);
+
+                mediaRecorder.ondataavailable = (e) => {
+                    chunks.push(e.data);
+                };
+
+                mediaRecorder.onstop = () => {
+                    // Empaquetamos todo el fragmento grabado en un Blob limpio
+                    const audioBlob = new Blob(chunks, { type: mediaRecorder.mimeType });
+                    chunks = [];
+                    
+                    if (ws.readyState === WebSocket.OPEN) {
+                        ws.send(audioBlob);
+                        statusDiv.innerText = '✅ Mensaje enviado a la ruta';
+                        setTimeout(() => {
+                            statusDiv.innerText = '📻 Conectado a la Central - Listo';
+                        }, 1500);
+                    }
+                };
+
+                // Eventos del botón para simular Walkie-Talkie físico
+                btnRadio.addEventListener('mousedown', () => {
+                    if (ws.readyState !== WebSocket.OPEN) return;
                     chunks = [];
                     mediaRecorder.start();
-                    pttBtn.classList.add('active');
-                    statusDiv.innerText = "🎙️ Transmitiendo...";
-                }
-            }
+                    statusDiv.innerText = '🎙️ Transmitiendo a los colectivos...';
+                    btnRadio.style.backgroundColor = '#ff4757';
+                });
 
-            function detenerGrabacion(e) {
-                e.preventDefault();
-                if (mediaRecorder.state === "recording") {
-                    mediaRecorder.stop();
-                    pttBtn.classList.remove('active');
-                    statusDiv.innerText = "📻 Canal Abierto";
-                }
-            }
+                btnRadio.addEventListener('mouseup', () => {
+                    if (mediaRecorder.state === 'recording') {
+                        mediaRecorder.stop();
+                        btnRadio.style.backgroundColor = '#2ed573';
+                    }
+                });
 
-            // SOPORTE PARA CELULARES (Eventos táctiles)
-            pttBtn.addEventListener('touchstart', iniciarGrabacion);
-            pttBtn.addEventListener('touchend', detenerGrabacion);
+                // Soporte para pantallas táctiles por si abres la web desde otro teléfono
+                btnRadio.addEventListener('touchstart', (e) => {
+                    e.preventDefault();
+                    if (ws.readyState !== WebSocket.OPEN) return;
+                    chunks = [];
+                    mediaRecorder.start();
+                    statusDiv.innerText = '🎙️ Transmitiendo a los colectivos...';
+                    btnRadio.style.backgroundColor = '#ff4757';
+                });
 
-            // SOPORTE PARA COMPUTADORA (Por si sigues probando en PC)
-            pttBtn.addEventListener('mousedown', iniciarGrabacion);
-            pttBtn.addEventListener('mouseup', detenerGrabacion);
-
-        }).catch(err => {
-            statusDiv.innerText = "⚠️ Activa el permiso del micrófono";
-            console.error(err);
-        });
+                btnRadio.addEventListener('touchend', () => {
+                    if (mediaRecorder.state === 'recording') {
+                        mediaRecorder.stop();
+                        btnRadio.style.backgroundColor = '#2ed573';
+                    }
+                });
+            })
+            .catch(err => {
+                console.error('No se pudo acceder al micrófono de la PC:', err);
+                statusDiv.innerText = '❌ Error: Permite el uso del micrófono en tu navegador';
+            });
     </script>
 </body>
 </html>
