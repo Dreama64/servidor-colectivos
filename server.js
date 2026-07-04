@@ -1,64 +1,108 @@
 const express = require('express');
-const http = require('http');
-const { WebSocketServer } = require('ws');
-const fs = require('fs');
-const path = require('path');
-const cors = require('cors');
 const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const http = require('http');
+const WebSocket = require('ws');
 
 const app = express();
-app.use(cors());
+const server = http.createServer(app);
+const wss = new WebSocket.Server({ server });
 
-// 1. Crear carpeta física para guardar los audios si no existe
+const PORT = process.env.PORT || 3000;
+// URL base dinámica para Render o entorno local
+const BASE_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
+
+// Asegurar que la carpeta de subidas exista
 const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir);
 }
 
-// 2. Hacer que la carpeta sea pública
-app.use('/uploads', express.static(uploadsDir));
-
-// 3. Configurar el motor de subida (Multer)
+// Configuración de almacenamiento con Multer
 const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
+  destination: (req, file, cb) => {
     cb(null, uploadsDir);
   },
-  filename: function (req, file, cb) {
-    cb(null, `audio_${Date.now()}.m4a`);
+  filename: (req, file, cb) => {
+    // Mantener la extensión original o forzar .m4a
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, 'audio-' + uniqueSuffix + '.m4a');
   }
 });
+
 const upload = multer({ storage: storage });
 
-const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
+// Middleware para habilitar CORS
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  next();
+});
 
-// 4. API Endpoint de recepción
-app.post('/upload', upload.single('audio'), (req, res) => {
-  if (!req.file) {
-    return res.status(400).send('No se recibió audio.');
-  }
-  
-  const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
-  const emisorId = req.body.emisor || 'desconocido';
-
-  console.log(`🎙️ Archivo guardado. Emisor: ${emisorId} | URL: ${fileUrl}`);
-
-  // Avisamos a todos los choferes conectados enviando la URL y el ID del emisor
-  wss.clients.forEach((client) => {
-    if (client.readyState === 1) {
-      client.send(JSON.stringify({ type: 'nuevo_audio', url: fileUrl, emisor: emisorId }));
+// CONFIGURACIÓN CORREGIDA: Servir archivos estáticos con los headers requeridos por Android
+app.use('/uploads', express.static(uploadsDir, {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.m4a')) {
+      res.setHeader('Content-Type', 'audio/mp4'); // MIME compatible con el reproductor nativo
+      res.setHeader('Accept-Ranges', 'bytes');    // Requerido por Android para streaming/descarga
+      res.setHeader('Cache-Control', 'no-store');  // Evitar almacenamiento en caché del navegador/sistema
     }
-  });
+  }
+}));
 
-  res.status(200).json({ success: true });
+// ENDPOINT CORREGIDO: Subida de audio que retorna la estructura JSON esperada
+app.post('/upload', upload.single('audio'), (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, error: 'No se recibió ningún archivo de audio' });
+    }
+
+    const emisor = req.body.emisor || 'desconocido';
+    const fileUrl = `${BASE_URL}/uploads/${req.file.filename}`;
+
+    // Notificar a todos los clientes conectados por WebSocket
+    const mensajeNotificacion = JSON.stringify({
+      type: 'nuevo_audio',
+      url: fileUrl,
+      emisor: emisor
+    });
+
+    wss.clients.forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(mensajeNotificacion);
+      }
+    });
+
+    // Respuesta JSON corregida
+    return res.status(200).json({ 
+      success: true, 
+      url: fileUrl 
+    });
+
+  } catch (error) {
+    console.error('Error en el endpoint /upload:', error);
+    return res.status(500).json({ success: false, error: 'Error interno del servidor' });
+  }
 });
 
+// Ruta base de prueba
+app.get('/', (req, res) => {
+  res.send('Servidor Walkie-Talkie Colectivo-Link en línea.');
+});
+
+// Gestión de conexiones WebSocket
 wss.on('connection', (ws) => {
-  console.log('📱 Chofer conectado al canal ✅');
-  ws.on('close', () => console.log('❌ Chofer fuera de línea'));
+  console.log('Cliente conectado por WebSocket');
+  
+  ws.on('close', () => {
+    console.log('Cliente desconectado de WebSocket');
+  });
 });
 
-const PORT = process.env.PORT || 8080;
+// Iniciar el servidor HTTP y WebSocket
 server.listen(PORT, () => {
-  console.log(`🚀 Servidor HTTP y Radio escuchando en el puerto ${PORT}`);
+  console.log(`Servidor ejecutándose en el puerto ${PORT}`);
+  console.log(`URL Base configurada: ${BASE_URL}`);
 });
