@@ -84,7 +84,6 @@ export default function App() {
       const resultadoDescarga = await FileSystem.downloadAsync(urlRemota, rutaLocal);
       console.log("Archivo descargado en:", resultadoDescarga.uri);
 
-      // DIAGNÓSTICO 1: Verificar si el archivo local realmente existe y tiene tamaño
       const infoArchivo = await FileSystem.getInfoAsync(resultadoDescarga.uri);
       if (!infoArchivo.exists) {
         Alert.alert("Error de Archivo", "El archivo descargado no existe en la ruta de la caché.");
@@ -116,7 +115,6 @@ export default function App() {
             actualizarUI('📻 CENTRAL EN LÍNEA', '#2ed573', 'PULSA PARA HABLAR');
             descargarSonido();
           }
-          // DIAGNÓSTICO 2: Capturar errores durante los cambios de estado internos
           if (playbackStatus.error) {
             Alert.alert("Error en PlaybackStatus", String(playbackStatus.error));
           }
@@ -135,7 +133,6 @@ export default function App() {
       console.log("Estado del sonido después de playAsync():", estadoPostPlay);
 
     } catch (error) {
-      // DIAGNÓSTICO 3: Alerta emergente en el celular con el mensaje nativo de Android
       Alert.alert(
         "Fallo Crítico Android",
         `Mensaje: ${error.message}\nCódigo: ${error.code || 'Desconocido'}`
@@ -232,15 +229,15 @@ export default function App() {
 
   return (
     <View style={styles.container}>
-      <div style={styles.headerDisplay}>
-        <p style={styles.brandText}>Walkie-Talkie v1.0</p>
-        <div style={styles.signalContainer}>
-          <div style={[styles.signalDot, { backgroundColor: statusColor }]} />
+      <View style={styles.headerDisplay}>
+        <Text style={styles.brandText}>Walkie-Talkie v1.0</Text>
+        <View style={styles.signalContainer}>
+          <View style={[styles.signalDot, { backgroundColor: statusColor }]} />
           <Text style={[styles.estado, { color: statusColor }]}>{statusText}</Text>
-        </div>
-      </div>
+        </View>
+      </View>
 
-      <div style={styles.centerSpace}>
+      <View style={styles.centerSpace}>
         <TouchableOpacity
           activeOpacity={0.8}
           onPressIn={iniciarTransmision}
@@ -254,11 +251,11 @@ export default function App() {
           <Text style={styles.btnText}>PTT</Text>
           <Text style={styles.subTexto}>{subText}</Text>
         </TouchableOpacity>
-      </div>
+      </View>
 
-      <div style={styles.footer}>
-        Mantén presionado para hablar • Modo Chofer
-      </div>
+      <View style={styles.footer}>
+        <Text style={styles.footerText}>Mantén presionado para hablar • Modo Chofer</Text>
+      </View>
     </View>
   );
 }
@@ -357,6 +354,10 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   footer: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  footerText: {
     color: '#57606f',
     fontSize: 12,
     fontWeight: '600',
