@@ -29,7 +29,7 @@ export default function App() {
 
   const ws = useRef(null);
   const recordingRef = useRef(null);
-  const soundRef = null; 
+  const soundRef = useRef(null); 
 
   // 🔄 Ciclo de vida inicial
   useEffect(() => {
@@ -180,6 +180,11 @@ export default function App() {
   const iniciarTransmision = async () => {
     try {
       Vibration.vibrate(80);
+
+      // 🛠️ SOLUCIÓN APK: Primero limpiamos cualquier sonido para liberar los canales de audio
+      await descargarSonido();
+
+      // Luego configuramos de forma segura el modo de grabación
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: true,
         playsInSilentModeIOS: true,
@@ -187,8 +192,6 @@ export default function App() {
         shouldDuckAndroid: false,
         staysActiveInBackground: false
       });
-
-      await descargarSonido();
 
       const opcionesGrabacion = {
         android: {
@@ -221,6 +224,7 @@ export default function App() {
       setIsButtonActive(true);
       actualizarUI('🎙️ TRANSMITIENDO...', '#ff4757', 'SUELTA PARA ENVIAR');
     } catch (error) {
+      console.error(error);
       Alert.alert("Error", "No se pudo activar el micrófono.");
     }
   };
@@ -260,7 +264,7 @@ export default function App() {
     }
   };
 
-  // 🔗 Funciones para abrir plataformas de donación externos
+  // 🔗 Funciones para abrir plataformas de donación externas
   const abrirPayPal = () => {
     Linking.openURL('https://www.paypal.me/Dreamnx');
   };
