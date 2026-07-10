@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, Alert, Vibration } from 'react-native';
 import { Audio } from 'expo-av';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy'; // ✨ Corregido para Expo SDK 54
 
 export default function App() {
   const [statusText, setStatusText] = useState('📻 CENTRAL EN LÍNEA');
@@ -241,7 +241,7 @@ export default function App() {
         <TouchableOpacity
           activeOpacity={0.8}
           onPressIn={iniciarTransmision}
-          onPressOut={finalizarTransmision}
+          onPressOut={finalizerTransmision}
           style={[
             styles.btnHablar,
             isButtonActive ? styles.btnActive : styles.btnInactive,
