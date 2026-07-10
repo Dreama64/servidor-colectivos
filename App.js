@@ -21,6 +21,9 @@ export default function App() {
   const [nombreIngresado, setNombreIngresado] = useState('');
   const [nombreUsuarioCompleto, setNombreUsuarioCompleto] = useState('');
 
+  // 🎙️ Estado para saber quién está hablando en tiempo real
+  const [emisorActual, setEmisorActual] = useState('');
+
   // 📻 Estados originales de tu Walkie-Talkie
   const [statusText, setStatusText] = useState('📻 CENTRAL EN LÍNEA');
   const [statusColor, setStatusColor] = useState('#2ed573');
@@ -113,6 +116,10 @@ export default function App() {
         const data = JSON.parse(event.data);
         if (data.type === 'nuevo_audio' && data.url) {
           if (data.emisor === nombreIdentificador) return;
+          
+          // 🗣️ Guardamos el nombre de quien está transmitiendo el audio entrante
+          setEmisorActual(data.emisor);
+          
           await descargarYReproducirAudio(data.url);
         }
       } catch (error) {
@@ -161,6 +168,9 @@ export default function App() {
           if (playbackStatus.didJustFinish) {
             actualizarUI('📻 CENTRAL EN LÍNEA', '#2ed573', 'PULSA PARA HABLAR');
             descargarSonido();
+            
+            // 🧼 Limpiamos el emisor de la pantalla al terminar el audio
+            setEmisorActual('');
           }
         }
       );
@@ -174,6 +184,7 @@ export default function App() {
       Alert.alert("Fallo Crítico Android", `Mensaje: ${error.message}`);
       actualizarUI('⚠️ ERROR DE AUDIO', '#ff4757', 'PULSA PARA INTENTAR');
       descargarSonido();
+      setEmisorActual(''); // Limpiar también en caso de error
     }
   };
 
@@ -181,10 +192,8 @@ export default function App() {
     try {
       Vibration.vibrate(80);
 
-      // 🛠️ SOLUCIÓN APK: Primero limpiamos cualquier sonido para liberar los canales de audio
       await descargarSonido();
 
-      // Luego configuramos de forma segura el modo de grabación
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: true,
         playsInSilentModeIOS: true,
@@ -352,7 +361,10 @@ export default function App() {
 
           <View style={styles.signalContainer}>
             <View style={[styles.signalDot, { backgroundColor: statusColor }]} />
-            <Text style={[styles.estado, { color: statusColor }]}>{statusText}</Text>
+            {/* 🔄 Aquí mostramos dinámicamente quién habla si hay un emisor activo */}
+            <Text style={[styles.estado, { color: statusColor }]}>
+              {emisorActual ? `🔊 DE: ${emisorActual}` : statusText}
+            </Text>
           </View>
         </View>
 
@@ -441,6 +453,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 5,
+    paddingHorizontal: 10,
   },
   signalDot: {
     width: 10,
@@ -449,9 +462,10 @@ const styles = StyleSheet.create({
     marginRight: 10,
   },
   estado: {
-    fontSize: 20,
+    fontSize: 18, // Ligeramente ajustado para que quepan nombres más largos
     fontWeight: '900',
     letterSpacing: 1,
+    textAlign: 'center',
   },
   centerSpace: {
     flex: 1,
@@ -606,7 +620,7 @@ const styles = StyleSheet.create({
   botonMercadoPago: {
     width: '100%',
     height: 50,
-    backgroundColor: '#009ee3', // Color oficial de Mercado Pago
+    backgroundColor: '#009ee3',
     borderRadius: 25,
     justifyContent: 'center',
     alignItems: 'center',
