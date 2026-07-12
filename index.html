@@ -1,129 +1,265 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Central de Radio - Colectivos</title>
-    <style>
-        body { font-family: Arial, sans-serif; background-color: #1e222b; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-        #btn-radio { width: 200px; height: 200px; border-radius: 50%; background-color: #2ed573; border: 6px solid #2f3542; color: white; font-size: 20px; font-weight: bold; cursor: pointer; outline: none; transition: background 0.2s, transform 0.1s; box-shadow: 0 8px 15px rgba(0,0,0,0.3); }
-        #btn-radio:active { background-color: #26af5f; transform: scale(0.96); }
-        #status { margin-top: 30px; font-size: 18px; color: #a4b0be; font-weight: bold; }
-    </style>
+  <meta charset="UTF-8">
+  <title>Central de Colectivos</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    /* Estilos Generales e Interfaz Oscura */
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: #11141a;
+      color: #ffffff;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 100vh;
+      box-sizing: border-box;
+      padding: 40px 20px;
+    }
+
+    /* Contenedor del Header / Pantalla de Estado */
+    .header-display {
+      width: 100%;
+      max-width: 400px;
+      background-color: #1c2029;
+      border-radius: 16px;
+      padding: 20px;
+      border: 1px solid #2d3446;
+      text-align: center;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+    }
+
+    .brand-text {
+      color: #57606f;
+      font-size: 12px;
+      font-weight: bold;
+      letter-spacing: 2px;
+      margin: 0 0 10px 0;
+      text-transform: uppercase;
+    }
+
+    /* Indicador de Estado Dinámico */
+    .signal-container {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+    }
+
+    .signal-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 5px;
+      background-color: #a4b0be; /* Gris por defecto */
+      transition: background-color 0.3s ease;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 20px;
+      font-weight: 900;
+      letter-spacing: 1px;
+      color: #a4b0be;
+      transition: color 0.3s ease;
+    }
+
+    /* Contenedor Central del Botón PTT */
+    .center-space {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* Botón Principal Estilo Walkie-Talkie */
+    #btnHablar {
+      width: 220px;
+      height: 220px;
+      border-radius: 50%;
+      border: 8px solid #2ed573; /* Verde cuando está listo */
+      background-color: #1e2432;
+      color: #ffffff;
+      font-size: 28px;
+      font-weight: 900;
+      letter-spacing: 1px;
+      cursor: pointer;
+      outline: none;
+      user-select: none;
+      -webkit-user-select: none;
+      transition: all 0.15s ease;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+    }
+
+    #btnHablar span {
+      font-size: 10px;
+      color: #a4b0be;
+      font-weight: bold;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+
+    /* Clases de Estado para el Botón */
+    #btnHablar.ready {
+      border-color: #2ed573;
+      background-color: #1e2432;
+    }
+
+    #btnHablar.transmitting {
+      border-color: #ff6b81;
+      background-color: #ff4757;
+      transform: scale(0.95);
+      box-shadow: 0 4px 10px rgba(255, 71, 87, 0.4);
+    }
+
+    #btnHablar.listening {
+      border-color: #eccc68;
+      background-color: #222f3e;
+    }
+
+    /* Footer Informativo */
+    .footer {
+      color: #57606f;
+      font-size: 12px;
+      font-weight: 600;
+      text-align: center;
+    }
+  </style>
 </head>
 <body>
 
-    <button id="btn-radio">PRESIONA<br>PARA HABLAR</button>
-    <div id="status">Conectando a la red...</div>
+  <div class="header-display">
+    <p class="brand-text">Central Web v1.0</p>
+    <div class="signal-container">
+      <div id="indicador" class="signal-dot"></div>
+      <h1 id="estado">Conectando a la central...</h1>
+    </div>
+  </div>
 
-    <script>
-        const statusDiv = document.getElementById('status');
-        const btnRadio = document.getElementById('btn-radio');
+  <div class="center-space">
+    <button id="btnHablar" class="ready">
+      PTT
+      <span id="subTexto">PULSA PARA HABLAR</span>
+    </button>
+  </div>
+
+  <div class="footer">
+    Mantén presionado para hablar • Modo Walkie-Talkie
+  </div>
+
+  <script>
+    const ws = new WebSocket('wss://servidor-colectivos.onrender.com');
+    const estado = document.getElementById('estado');
+    const indicador = document.getElementById('indicador');
+    const btnHablar = document.getElementById('btnHablar');
+    const subTexto = document.getElementById('subTexto');
+    
+    const miId = "web_" + Date.now().toString(); 
+    
+    let mediaRecorder;
+    let audioChunks = [];
+
+    // Funciones auxiliares para actualizar la UI visualmente
+    function cambiarEstadoUI(texto, color, claseBoton, textoSecundario) {
+      estado.innerText = texto;
+      estado.style.color = color;
+      indicador.style.backgroundColor = color;
+      btnHablar.className = claseBoton;
+      subTexto.innerText = textoSecundario;
+    }
+
+    ws.onopen = () => cambiarEstadoUI('📻 CENTRAL EN LÍNEA', '#2ed573', 'ready', 'PULSA PARA HABLAR');
+    ws.onclose = () => cambiarEstadoUI('❌ DESCONECTADO', '#ff4757', 'ready', 'SIN SEÑAL');
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
         
-        // Dirección oficial de tu backend en Render
-        const ws = new WebSocket('wss://servidor-colectivos.onrender.com');
-        
-        let mediaRecorder;
-        let chunks = [];
+        if (data.type === 'nuevo_audio' && data.url) {
+          if (data.emisor === miId) return; 
 
-        ws.onopen = () => {
-            statusDiv.innerText = '📻 Conectado a la Central - Listo';
-        };
+          cambiarEstadoUI('🔊 ESCUCHANDO RUTA...', '#eccc68', 'listening', 'TRANSMISIÓN ENTRANTE');
+          
+          const reproductor = new Audio(data.url);
+          reproductor.play();
 
-        ws.onclose = () => {
-            statusDiv.innerText = '⚠️ Desconectado. Reintentando...';
-        };
+          reproductor.onended = () => {
+            cambiarEstadoUI('📻 CENTRAL EN LÍNEA', '#2ed573', 'ready', 'PULSA PARA HABLAR');
+          };
+        }
+      } catch (error) {
+        console.log("Dato recibido no es JSON o es inválido", event.data);
+      }
+    };
 
-        ws.onerror = (err) => {
-            console.error('Error WebSocket:', err);
-        };
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+      mediaRecorder = new MediaRecorder(stream);
 
-        // ESCUCHAR AL CELULAR (Esto ya te funciona)
-        ws.onmessage = async (event) => {
-            statusDiv.innerText = '🔊 Escuchando al chofer...';
-            try {
-                const audioBlob = event.data;
-                const audioUrl = URL.createObjectURL(audioBlob);
-                const audio = new Audio(audioUrl);
-                await audio.play();
-                audio.onended = () => {
-                    statusDiv.innerText = '📻 Conectado a la Central - Listo';
-                };
-            } catch (e) {
-                console.error('Error al reproducir audio en web:', e);
-                statusDiv.innerText = '📻 Conectado a la Central - Listo';
-            }
-        };
+      mediaRecorder.ondataavailable = event => {
+        audioChunks.push(event.data);
+      };
 
-        // TRANSMITIR HACIA EL CELULAR (Ajustado para compatibilidad móvil)
-        navigator.mediaDevices.getUserMedia({ audio: true })
-            .then(stream => {
-                // Forzamos un formato estándar que el decodificador del teléfono entienda sin problemas
-                let options = { mimeType: 'audio/webm;codecs=opus' };
-                if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-                    options = { mimeType: 'audio/ogg;codecs=opus' };
-                }
-                if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-                    options = {}; // Si el navegador es antiguo usa la configuración por defecto
-                }
+      mediaRecorder.onstop = () => {
+        cambiarEstadoUI('📥 ENVIANDO AUDIO...', '#a4b0be', 'ready', 'PROCESANDO TRANSMISIÓN');
+        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+        audioChunks = []; 
 
-                mediaRecorder = new MediaRecorder(stream, options);
+        const formData = new FormData();
+        formData.append('emisor', miId);
+        formData.append('audio', audioBlob, 'audio.webm');
 
-                mediaRecorder.ondataavailable = (e) => {
-                    chunks.push(e.data);
-                };
+        fetch('https://servidor-colectivos.onrender.com/upload', {
+          method: 'POST',
+          body: formData
+        }).then(() => {
+          cambiarEstadoUI('📻 CENTRAL EN LÍNEA', '#2ed573', 'ready', 'PULSA PARA HABLAR');
+        }).catch(err => {
+          console.error(err);
+          cambiarEstadoUI('❌ ERROR AL ENVIAR', '#ff4757', 'ready', 'FALLO DE RED');
+        });
+      };
+    }).catch(err => {
+      console.error("Permiso de micrófono denegado:", err);
+      cambiarEstadoUI('⚠️ CONFIGURAR MIC', '#ff4757', 'ready', 'FALTA PERMISO');
+    });
 
-                mediaRecorder.onstop = () => {
-                    // Empaquetamos todo el fragmento grabado en un Blob limpio
-                    const audioBlob = new Blob(chunks, { type: mediaRecorder.mimeType });
-                    chunks = [];
-                    
-                    if (ws.readyState === WebSocket.OPEN) {
-                        ws.send(audioBlob);
-                        statusDiv.innerText = '✅ Mensaje enviado a la ruta';
-                        setTimeout(() => {
-                            statusDiv.innerText = '📻 Conectado a la Central - Listo';
-                        }, 1500);
-                    }
-                };
+    // Eventos del Ratón (Computadora)
+    btnHablar.onmousedown = () => {
+      if(mediaRecorder && mediaRecorder.state === 'inactive') {
+        mediaRecorder.start();
+        cambiarEstadoUI('🎙️ TRANSMITIENDO...', '#ff4757', 'transmitting', 'SUELTA PARA ENVIAR');
+      }
+    };
 
-                // Eventos del botón para simular Walkie-Talkie físico
-                btnRadio.addEventListener('mousedown', () => {
-                    if (ws.readyState !== WebSocket.OPEN) return;
-                    chunks = [];
-                    mediaRecorder.start();
-                    statusDiv.innerText = '🎙️ Transmitiendo a los colectivos...';
-                    btnRadio.style.backgroundColor = '#ff4757';
-                });
+    btnHablar.onmouseup = () => {
+      if(mediaRecorder && mediaRecorder.state === 'recording') {
+        mediaRecorder.stop();
+      }
+    };
 
-                btnRadio.addEventListener('mouseup', () => {
-                    if (mediaRecorder.state === 'recording') {
-                        mediaRecorder.stop();
-                        btnRadio.style.backgroundColor = '#2ed573';
-                    }
-                });
+    // Soporte para pantallas táctiles (Celulares / Tablets)
+    btnHablar.ontouchstart = (e) => {
+      e.preventDefault();
+      if(mediaRecorder && mediaRecorder.state === 'inactive') {
+        mediaRecorder.start();
+        cambiarEstadoUI('🎙️ TRANSMITIENDO...', '#ff4757', 'transmitting', 'SUELTA PARA ENVIAR');
+      }
+    };
 
-                // Soporte para pantallas táctiles por si abres la web desde otro teléfono
-                btnRadio.addEventListener('touchstart', (e) => {
-                    e.preventDefault();
-                    if (ws.readyState !== WebSocket.OPEN) return;
-                    chunks = [];
-                    mediaRecorder.start();
-                    statusDiv.innerText = '🎙️ Transmitiendo a los colectivos...';
-                    btnRadio.style.backgroundColor = '#ff4757';
-                });
-
-                btnRadio.addEventListener('touchend', () => {
-                    if (mediaRecorder.state === 'recording') {
-                        mediaRecorder.stop();
-                        btnRadio.style.backgroundColor = '#2ed573';
-                    }
-                });
-            })
-            .catch(err => {
-                console.error('No se pudo acceder al micrófono de la PC:', err);
-                statusDiv.innerText = '❌ Error: Permite el uso del micrófono en tu navegador';
-            });
-    </script>
+    btnHablar.ontouchend = (e) => {
+      e.preventDefault();
+      if(mediaRecorder && mediaRecorder.state === 'recording') {
+        mediaRecorder.stop();
+      }
+    };
+  </script>
 </body>
 </html>

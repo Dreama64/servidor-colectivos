@@ -25,7 +25,6 @@ const storage = multer.diskStorage({
     cb(null, uploadsDir);
   },
   filename: (req, file, cb) => {
-    // Mantener la extensión original o forzar .m4a
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     cb(null, 'audio-' + uniqueSuffix + '.m4a');
   }
@@ -41,18 +40,18 @@ app.use((req, res, next) => {
   next();
 });
 
-// CONFIGURACIÓN CORREGIDA: Servir archivos estáticos con los headers requeridos por Android
+// Servir archivos estáticos con los headers requeridos por Android
 app.use('/uploads', express.static(uploadsDir, {
   setHeaders: (res, filePath) => {
     if (filePath.endsWith('.m4a')) {
-      res.setHeader('Content-Type', 'audio/mp4'); // MIME compatible con el reproductor nativo
-      res.setHeader('Accept-Ranges', 'bytes');    // Requerido por Android para streaming/descarga
-      res.setHeader('Cache-Control', 'no-store');  // Evitar almacenamiento en caché del navegador/sistema
+      res.setHeader('Content-Type', 'audio/mp4'); 
+      res.setHeader('Accept-Ranges', 'bytes');    
+      res.setHeader('Cache-Control', 'no-store');  
     }
   }
 }));
 
-// ENDPOINT CORREGIDO: Subida de audio que retorna la estructura JSON esperada
+// ENDPOINT: Subida de audio (CORREGIDO para incluir la sala en el envío)
 app.post('/upload', upload.single('audio'), (req, res) => {
   try {
     if (!req.file) {
@@ -60,13 +59,16 @@ app.post('/upload', upload.single('audio'), (req, res) => {
     }
 
     const emisor = req.body.emisor || 'desconocido';
+    // 🛠️ FIX 1: Capturar la sala/canal enviado desde el celular
+    const sala = req.body.sala || req.body.canal || req.body.room || 'General';
     const fileUrl = `${BASE_URL}/uploads/${req.file.filename}`;
 
-    // Notificar a todos los clientes conectados por WebSocket
+    // Notificar a todos los clientes por WebSocket incluyendo la sala/canal
     const mensajeNotificacion = JSON.stringify({
       type: 'nuevo_audio',
       url: fileUrl,
-      emisor: emisor
+      emisor: emisor,
+      sala: sala // 🛠️ Ahora la app sabe de qué canal viene el audio y puede filtrarlo
     });
 
     wss.clients.forEach((client) => {
@@ -75,7 +77,6 @@ app.post('/upload', upload.single('audio'), (req, res) => {
       }
     });
 
-    // Respuesta JSON corregida
     return res.status(200).json({ 
       success: true, 
       url: fileUrl 
@@ -87,21 +88,43 @@ app.post('/upload', upload.single('audio'), (req, res) => {
   }
 });
 
-// Ruta base de prueba
 app.get('/', (req, res) => {
   res.send('Servidor Walkie-Talkie Colectivo-Link en línea.');
 });
 
 // Gestión de conexiones WebSocket
 wss.on('connection', (ws) => {
-  console.log('Cliente conectado por WebSocket');
+  console.log('Cliente conectado por WebSocket 🟢');
   
+  // 🛠️ FIX 2: Escuchar y retransmitir los mensajes de texto a los demás usuarios
+  ws.on('message', (message) => {
+    try {
+      // Validar que el mensaje sea un JSON correcto
+      const data = JSON.parse(message);
+      console.log('Mensaje de texto recibido en servidor:', data.texto || data.mensaje);
+
+      // Reenviar el mensaje de texto a todos los celulares conectados
+      wss.clients.forEach((client) => {
+        if (client.readyState === WebSocket.OPEN) {
+          client.send(JSON.stringify(data));
+        }
+      });
+    } catch (e) {
+      // Si mandan algo que no es JSON (como un ping de control), se reenvía de forma simple
+      wss.clients.forEach((client) => {
+        if (client.readyState === WebSocket.OPEN) {
+          client.send(message.toString());
+        }
+      });
+    }
+  });
+
   ws.on('close', () => {
-    console.log('Cliente desconectado de WebSocket');
+    console.log('Cliente desconectado de WebSocket 🔴');
   });
 });
 
-// Iniciar el servidor HTTP y WebSocket
+// Iniciar el servidor
 server.listen(PORT, () => {
   console.log(`Servidor ejecutándose en el puerto ${PORT}`);
   console.log(`URL Base configurada: ${BASE_URL}`);
