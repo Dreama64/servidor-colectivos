@@ -45,11 +45,23 @@ export default function App() {
   const soundRef = useRef(null); 
   const flatListRef = useRef(null);
 
+  // 🛠️ FIX 1: Referencia para evitar el Stale Closure en WebSockets
+  const canalActivoRef = useRef(canalActivo);
+
   useEffect(() => {
-    comprobarUsuario();
+    // Sincronizar el ref en tiempo real cada vez que cambia el estado
+    canalActivoRef.current = canalActivo;
+  }, [canalActivo]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      comprobarUsuario();
+    }, 2000); 
+    
     configurarAudioInicial();
 
     return () => {
+      clearTimeout(timer);
       if (ws.current) ws.current.close();
       descargarSound();
     };
@@ -101,7 +113,8 @@ export default function App() {
       listaActualizada.push(nuevoMsg);
       await AsyncStorage.setItem(`@chat_${canalDestino}`, JSON.stringify(listaActualizada));
       
-      if (canalDestino === canalActivo) {
+      // 🛠️ Usa la referencia dinámica en lugar del estado desactualizado
+      if (canalDestino === canalActivoRef.current) {
         setMensajes(listaActualizada);
       }
     } catch (error) {
@@ -186,20 +199,40 @@ export default function App() {
       try {
         const data = JSON.parse(event.data);
         
-        if (data.type === 'nuevo_audio' && data.url) {
-          if (data.emisor === nombreUsuarioCompleto) return;
-          setEmisorActual(data.emisor);
-          await descargarYReproducirAudio(data.url);
+        // 🔒 Filtro estricto anti-eco
+        if (data.emisor === nombreIdentificador || data.emisor === nombreUsuarioCompleto) {
+          return; 
         }
 
-        if (data.type === 'nuevo_mensaje_texto' && data.texto) {
+        // Obtener el canal enviado por el servidor
+        const salaRecibida = data.sala || data.canal || data.room || 'General';
+
+        // 🎙️ 1. PROCESAR AUDIO
+        if ((data.type === 'nuevo_audio' || data.tipo === 'nuevo_audio' || data.url) && data.url) {
+          // 🛠️ FIX 2: Comparar con canalActivoRef.current para capturar cambios de sala
+          if (salaRecibida !== canalActivoRef.current) {
+            return; 
+          }
+          setEmisorActual(data.emisor || 'Compañero');
+          await descargarYReproducirAudio(data.url);
+          return;
+        }
+
+        // 💬 2. PROCESAR TEXTO
+        const esMensajeTexto = data.type === 'nuevo_mensaje_texto' || data.tipo === 'nuevo_mensaje_texto' || data.texto || data.mensaje;
+        
+        if (esMensajeTexto && !data.url) {
+          const contenidoTexto = data.texto || data.mensaje || '';
+          const emisorMsg = data.emisor || 'Compañero';
+          
           const mensajeEntrante = {
             id: data.id || Date.now().toString(),
-            emisor: data.emisor,
-            texto: data.texto,
-            timestamp: data.timestamp
+            emisor: emisorMsg,
+            texto: contenidoTexto,
+            timestamp: data.timestamp || new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
           };
-          await guardarMensajeLocalmente(mensajeEntrante, data.sala || 'General');
+          
+          await guardarMensajeLocalmente(mensajeEntrante, salaRecibida);
         }
 
       } catch (error) {
@@ -216,9 +249,13 @@ export default function App() {
     
     const objetoMensaje = {
       type: 'nuevo_mensaje_texto',
-      sala: canalActivo,
+      tipo: 'nuevo_mensaje_texto', 
+      sala: canalActivo,           
+      canal: canalActivo,          
+      room: canalActivo,           
       emisor: nombreUsuarioCompleto,
       texto: textoMensaje.trim(),
+      mensaje: textoMensaje.trim(), 
       timestamp: horaFormateada,
       id: Date.now().toString()
     };
@@ -249,7 +286,6 @@ export default function App() {
 
       const infoArchivo = await FileSystem.getInfoAsync(resultadoDescarga.uri);
       if (!infoArchivo.exists) {
-        Alert.alert("Error de Archivo", "El archivo descargado no existe.");
         return;
       }
 
@@ -283,7 +319,6 @@ export default function App() {
       await soundRef.current.playAsync();
 
     } catch (error) {
-      Alert.alert("Fallo Crítico Android", `Mensaje: ${error.message}`);
       actualizarUI('⚠️ ERROR DE AUDIO', '#ff4757', 'PULSA PARA INTENTAR');
       descargarSound();
       setEmisorActual('');
@@ -354,7 +389,9 @@ export default function App() {
 
       const formData = new FormData();
       formData.append('emisor', nombreUsuarioCompleto);
+      formData.append('sala', canalActivo); 
       formData.append('canal', canalActivo); 
+      formData.append('room', canalActivo); 
       formData.append('audio', {
         uri: uri,
         name: 'audio.m4a',
@@ -490,7 +527,7 @@ export default function App() {
     );
   }
 
-  // 💬 PANTALLA 4: CHAT UNIFICADO Y CORREGIDO
+  // 💬 PANTALLA 4: CHAT
   if (pantallaActual === 'chat') {
     const renderItemMensaje = ({ item }) => {
       const esMio = item.emisor === nombreUsuarioCompleto;
@@ -545,7 +582,6 @@ export default function App() {
             </TouchableOpacity>
           </View>
 
-          {/* Botón Gris de navegación unificado, sin verde ni azul brillante */}
           <TouchableOpacity 
             style={[styles.botonHubMenu, { width: '100%', height: 46, borderRadius: 12, marginBottom: 10 }]} 
             onPress={() => setPantallaActual('walkie')}
@@ -623,7 +659,7 @@ export default function App() {
     );
   }
 
-  // 📻 PANTALLA 6: RADIO WALKIE-TALKIE UNIFICADA
+  // 📻 PANTALLA 6: RADIO WALKIE-TALKIE
   if (pantallaActual === 'walkie') {
     return (
       <SafeAreaView style={styles.container}>
@@ -661,7 +697,6 @@ export default function App() {
           </TouchableOpacity>
         </View>
 
-        {/* Botón Gris de navegación unificado, sin azul brillante y con margen seguro */}
         <TouchableOpacity 
           style={[styles.botonHubMenu, { width: '100%', height: 46, borderRadius: 12, marginBottom: 10 }]} 
           onPress={() => setPantallaActual('chat')}
@@ -678,6 +713,7 @@ export default function App() {
 
   return (
     <View style={[styles.container, styles.centradoTotal]}>
+      <Text style={[styles.brandTitleText, { marginBottom: 20 }]}>Secoll Communications</Text>
       <ActivityIndicator size="large" color="#2ed573" />
     </View>
   );
@@ -690,7 +726,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'flex-start', 
     paddingTop: Platform.OS === 'ios' ? 50 : 30,
-    paddingBottom: Platform.OS === 'android' ? 30 : 20, // 👈 Más margen inferior para que no choque con los botones virtuales
+    paddingBottom: Platform.OS === 'android' ? 30 : 20, 
     paddingHorizontal: 20,
   },
   centradoTotal: {
@@ -900,14 +936,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#2ed573',
   },
-  // 🧭 ESTILO DE BOTÓN GRIS UNIFICADO (PARA MENÚS Y NAVEGACIÓN DE PANTALLAS)
   botonHubMenu: {
     width: '100%',
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#1e2432',
     borderWidth: 1,
-    borderColor: '#2d3446', // 👈 Gris unificado elegante
+    borderColor: '#2d3446', 
     borderRadius: 16,
     padding: 12,
     justifyContent: 'center',
@@ -969,7 +1004,7 @@ const styles = StyleSheet.create({
     height: 50,
     backgroundColor: '#003087',
     borderRadius: 25,
-    justifyContent: 'center',
+    justifycontent: 'center',
     alignItems: 'center',
     marginTop: 20,
     marginBottom: 10,
@@ -1003,8 +1038,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: 'bold',
   },
-
-  // 💬 ESTILOS DEL CHAT
   listaChatContainer: {
     flex: 1,
     width: '100%',
@@ -1022,7 +1055,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   burbujaMia: {
-    backgroundColor: '#2d3446', // 👈 Mensajes propios ahora son Gris Oscuro para no desentonar
+    backgroundColor: '#2d3446', 
     borderBottomRightRadius: 2,
     borderWidth: 1,
     borderColor: '#3a445a',
