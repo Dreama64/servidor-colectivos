@@ -8,15 +8,17 @@ import {
   Vibration, 
   TextInput, 
   SafeAreaView, 
-  Linking, 
   ActivityIndicator,
   FlatList,
   KeyboardAvoidingView,
-  Platform
+  Platform,
+  ScrollView,
+  Image
 } from 'react-native';
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as ImagePicker from 'expo-image-picker';
 
 const CANALES_PREDEFINIDOS = ['General', 'Canal 1', 'Canal 2', 'Canal 3'];
 
@@ -40,23 +42,31 @@ export default function App() {
   const [subText, setSubText] = useState('PULSA PARA HABLAR');
   const [isButtonActive, setIsButtonActive] = useState(false);
 
+  // 📝 ESTADOS PARA EL MÓDULO DE REPORTES
+  const [reportDescription, setReportDescription] = useState('');
+  const [reportImageUri, setReportImageUri] = useState(null);
+  const [isSubmittingReport, setIsSubmittingReport] = useState(false);
+
+  // 🟢 ESTADO Y PANEL DE USUARIOS CONECTADOS
+  const [showUsersPanel, setShowUsersPanel] = useState(false);
+  const [connectedUsers, setConnectedUsers] = useState([]);
+
   const ws = useRef(null);
   const recordingRef = useRef(null);
   const soundRef = useRef(null); 
   const flatListRef = useRef(null);
 
-  // 🛠️ FIX 1: Referencia para evitar el Stale Closure en WebSockets
   const canalActivoRef = useRef(canalActivo);
 
   useEffect(() => {
-    // Sincronizar el ref en tiempo real cada vez que cambia el estado
     canalActivoRef.current = canalActivo;
   }, [canalActivo]);
 
   useEffect(() => {
+    // ⏱️ Ajuste de tiempo del Splash inicial a 4 segundos
     const timer = setTimeout(() => {
       comprobarUsuario();
-    }, 2000); 
+    }, 4000); 
     
     configurarAudioInicial();
 
@@ -77,9 +87,10 @@ export default function App() {
     try {
       const usuarioGuardado = await AsyncStorage.getItem('nombre_chofer');
       if (usuarioGuardado) {
-        setNombreUsuarioCompleto(usuarioGuardado);
-        setNuevoNombre(usuarioGuardado.split(' #')[0]);
-        conectarWebSocket(usuarioGuardado);
+        const nombreLimpio = usuarioGuardado.split(' #')[0];
+        setNombreUsuarioCompleto(nombreLimpio);
+        setNuevoNombre(nombreLimpio);
+        conectarWebSocket(nombreLimpio);
         setPantallaActual('hub'); 
       } else {
         setPantallaActual('registro');
@@ -113,7 +124,6 @@ export default function App() {
       listaActualizada.push(nuevoMsg);
       await AsyncStorage.setItem(`@chat_${canalDestino}`, JSON.stringify(listaActualizada));
       
-      // 🛠️ Usa la referencia dinámica en lugar del estado desactualizado
       if (canalDestino === canalActivoRef.current) {
         setMensajes(listaActualizada);
       }
@@ -125,14 +135,13 @@ export default function App() {
   const manejarRegistro = async () => {
     if (nombreIngresado.trim() === '') return;
 
-    const numeroAleatorio = Math.floor(100 + Math.random() * 900);
-    const nombreCompleto = `${nombreIngresado.trim()} #${numeroAleatorio}`;
+    const nombreLimpio = nombreIngresado.trim();
 
     try {
-      await AsyncStorage.setItem('nombre_chofer', nombreCompleto);
-      setNombreUsuarioCompleto(nombreCompleto);
-      setNuevoNombre(nombreIngresado.trim());
-      conectarWebSocket(nombreCompleto);
+      await AsyncStorage.setItem('nombre_chofer', nombreLimpio);
+      setNombreUsuarioCompleto(nombreLimpio);
+      setNuevoNombre(nombreLimpio);
+      conectarWebSocket(nombreLimpio);
       setPantallaActual('hub');
     } catch (error) {
       console.log('Error al guardar en la memoria:', error);
@@ -142,16 +151,11 @@ export default function App() {
   const guardarNuevoNombre = async () => {
     if (nuevoNombre.trim() === '') return;
 
-    let numeroAleatorio = Math.floor(100 + Math.random() * 900);
-    if (nombreUsuarioCompleto.includes('#')) {
-      numeroAleatorio = nombreUsuarioCompleto.split('#')[1].trim();
-    }
-
-    const nuevoNombreCompleto = `${nuevoNombre.trim()} #${numeroAleatorio}`;
+    const nombreLimpio = nuevoNombre.trim();
 
     try {
-      await AsyncStorage.setItem('nombre_chofer', nuevoNombreCompleto);
-      setNombreUsuarioCompleto(nuevoNombreCompleto);
+      await AsyncStorage.setItem('nombre_chofer', nombreLimpio);
+      setNombreUsuarioCompleto(nombreLimpio);
       setIsEditing(false);
 
       if (ws.current) {
@@ -188,6 +192,14 @@ export default function App() {
 
     ws.current.onopen = () => {
       actualizarUI('📻 CENTRAL EN LÍNEA', '#2ed573', 'PULSA PARA HABLAR');
+      
+      if (ws.current.readyState === WebSocket.OPEN) {
+        ws.current.send(JSON.stringify({
+          type: 'join_channel',
+          emisor: nombreIdentificador,
+          sala: canalActivoRef.current
+        }));
+      }
     };
 
     ws.current.onclose = () => {
@@ -198,18 +210,24 @@ export default function App() {
     ws.current.onmessage = async (event) => {
       try {
         const data = JSON.parse(event.data);
-        
-        // 🔒 Filtro estricto anti-eco
+
+        // 👥 1. PROCESAR LISTA DE USUARIOS CONECTADOS
+        if (data.type === 'lista_usuarios' || data.tipo === 'lista_usuarios') {
+          const usuariosEnCanal = data.usuarios || [];
+          const otrosUsuarios = usuariosEnCanal.filter(u => u.nombre !== nombreIdentificador && u.nombre !== nombreUsuarioCompleto);
+          setConnectedUsers(otrosUsuarios);
+          return;
+        }
+
+        // Filtro anti-eco
         if (data.emisor === nombreIdentificador || data.emisor === nombreUsuarioCompleto) {
           return; 
         }
 
-        // Obtener el canal enviado por el servidor
         const salaRecibida = data.sala || data.canal || data.room || 'General';
 
-        // 🎙️ 1. PROCESAR AUDIO
+        // 🎙️ 2. PROCESAR AUDIO
         if ((data.type === 'nuevo_audio' || data.tipo === 'nuevo_audio' || data.url) && data.url) {
-          // 🛠️ FIX 2: Comparar con canalActivoRef.current para capturar cambios de sala
           if (salaRecibida !== canalActivoRef.current) {
             return; 
           }
@@ -218,7 +236,7 @@ export default function App() {
           return;
         }
 
-        // 💬 2. PROCESAR TEXTO
+        // 💬 3. PROCESAR MENSAJES DE TEXTO
         const esMensajeTexto = data.type === 'nuevo_mensaje_texto' || data.tipo === 'nuevo_mensaje_texto' || data.texto || data.mensaje;
         
         if (esMensajeTexto && !data.url) {
@@ -250,9 +268,9 @@ export default function App() {
     const objetoMensaje = {
       type: 'nuevo_mensaje_texto',
       tipo: 'nuevo_mensaje_texto', 
-      sala: canalActivo,           
+      sala: canalActivo,          
       canal: canalActivo,          
-      room: canalActivo,           
+      room: canalActivo,          
       emisor: nombreUsuarioCompleto,
       texto: textoMensaje.trim(),
       mensaje: textoMensaje.trim(), 
@@ -412,12 +430,95 @@ export default function App() {
     }
   };
 
-  const abrirPayPal = () => {
-    Linking.openURL('https://www.paypal.me/Dreamnx');
+  // 📷 FUNCIÓN PARA SELECCIONAR/TOMAR FOTO EN REPORTES
+  const tomarOSeleccionarFoto = async () => {
+    Alert.alert(
+      "Evidencia Fotográfica",
+      "Selecciona la fuente de la imagen",
+      [
+        {
+          text: "📷 Cámara",
+          onPress: async () => {
+            const permissions = await ImagePicker.requestCameraPermissionsAsync();
+            if (!permissions.granted) {
+              Alert.alert("Permiso requerido", "Se necesita acceso a la cámara.");
+              return;
+            }
+            const result = await ImagePicker.launchCameraAsync({
+              allowsEditing: true,
+              quality: 0.7,
+            });
+            if (!result.canceled) {
+              setReportImageUri(result.assets[0].uri);
+            }
+          }
+        },
+        {
+          text: "🖼️ Galería",
+          onPress: async () => {
+            const permissions = await ImagePicker.requestMediaLibraryPermissionsAsync();
+            if (!permissions.granted) {
+              Alert.alert("Permiso requerido", "Se necesita acceso a la galería.");
+              return;
+            }
+            const result = await ImagePicker.launchImageLibraryAsync({
+              allowsEditing: true,
+              quality: 0.7,
+            });
+            if (!result.canceled) {
+              setReportImageUri(result.assets[0].uri);
+            }
+          }
+        },
+        { text: "Cancelar", style: "cancel" }
+      ]
+    );
   };
 
-  const abrirMercadoPago = () => {
-    Linking.openURL('https://mpago.la/2JFh7tY');
+  // ✉️ ENVIAR REPORTE AL SERVIDOR
+  const enviarReporteIncidencia = async () => {
+    if (!reportDescription.trim()) {
+      Alert.alert("Campo Requerido", "Por favor ingresa la descripción de la novedad u incidencia.");
+      return;
+    }
+
+    setIsSubmittingReport(true);
+
+    try {
+      const formData = new FormData();
+      formData.append('author', nombreUsuarioCompleto);
+      formData.append('dateTime', new Date().toLocaleString('es-CL'));
+      formData.append('description', reportDescription.trim());
+
+      if (reportImageUri) {
+        const filename = reportImageUri.split('/').pop();
+        const match = /\.(\w+)$/.exec(filename);
+        const type = match ? `image/${match[1]}` : `image/jpeg`;
+        formData.append('photo', {
+          uri: reportImageUri,
+          name: filename || 'foto.jpg',
+          type: type,
+        });
+      }
+
+      await fetch('https://servidor-colectivos.onrender.com/report', {
+        method: 'POST',
+        body: formData,
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+
+      Alert.alert("✅ Reporte Enviado", "El reporte ha sido registrado exitosamente.");
+      setReportDescription('');
+      setReportImageUri(null);
+      setPantallaActual('hub');
+
+    } catch (error) {
+      Alert.alert("Error", "No se pudo conectar con el servidor para enviar el reporte.");
+    } finally {
+      setIsSubmittingReport(false);
+    }
   };
 
   // 📝 PANTALLA 1: REGISTRO
@@ -426,15 +527,15 @@ export default function App() {
       <SafeAreaView style={styles.container}>
         <View style={styles.tarjetaCentrada}>
           <Text style={styles.tituloBienvenida}>¡Bienvenido! 👋</Text>
-          <Text style={styles.subtituloBienvenida}>Identifícate para empezar a transmitir</Text>
+          <Text style={styles.subtituloBienvenida}>Identifícate para ingresar al sistema de control</Text>
           
           <TextInput
             style={styles.entradaTexto}
-            placeholder="Escribe tu nombre aquí..."
+            placeholder="Ej. Guardia Juan Perez..."
             placeholderTextColor="#888"
             value={nombreIngresado}
             onChangeText={setNombreIngresado}
-            maxLength={15}
+            maxLength={25}
           />
 
           <TouchableOpacity style={styles.botonVerde} onPress={manejarRegistro}>
@@ -451,7 +552,7 @@ export default function App() {
       <SafeAreaView style={[styles.container, { justifyContent: 'center' }]}>
         <View style={styles.tarjetaCentrada}>
           <Text style={styles.brandTitleText}>Secoll Communications</Text>
-          <Text style={styles.subtituloBienvenida}>Selecciona el modo de transmisión</Text>
+          <Text style={styles.subtituloBienvenida}>Sistema Operativo para Control de Terreno</Text>
 
           <TouchableOpacity 
             style={styles.botonHubMenu} 
@@ -463,12 +564,12 @@ export default function App() {
             <Text style={styles.iconoHubMenu}>🎙️</Text>
             <View style={styles.contenedorTextoHub}>
               <Text style={styles.tituloBotonHub}>Radio Walkie-Talkie</Text>
-              <Text style={styles.descripcionBotonHub}>Transmisión de voz en tiempo real</Text>
+              <Text style={styles.descripcionBotonHub}>Transmisión de voz PTT en tiempo real</Text>
             </View>
           </TouchableOpacity>
 
           <TouchableOpacity 
-            style={[styles.botonHubMenu, { marginTop: 15 }]} 
+            style={[styles.botonHubMenu, { marginTop: 12 }]} 
             onPress={() => {
               setModoComunicacion('chat');
               setPantallaActual('selector_canal');
@@ -477,12 +578,23 @@ export default function App() {
             <Text style={styles.iconoHubMenu}>💬</Text>
             <View style={styles.contenedorTextoHub}>
               <Text style={styles.tituloBotonHub}>Chat de Texto</Text>
-              <Text style={styles.descripcionBotonHub}>Mensajes escritos persistentes</Text>
+              <Text style={styles.descripcionBotonHub}>Mensajería escrita entre canales</Text>
             </View>
           </TouchableOpacity>
 
           <TouchableOpacity 
-            style={[styles.botonVolver, { marginTop: 30 }]} 
+            style={[styles.botonHubMenu, { marginTop: 12, borderColor: '#d97706', backgroundColor: '#1c1b17' }]} 
+            onPress={() => setPantallaActual('reportes')}
+          >
+            <Text style={styles.iconoHubMenu}>🚨</Text>
+            <View style={styles.contenedorTextoHub}>
+              <Text style={[styles.tituloBotonHub, { color: '#f59e0b' }]}>Generar Reporte</Text>
+              <Text style={styles.descripcionBotonHub}>Incidencias con foto y registro en central</Text>
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            style={[styles.botonVolver, { marginTop: 25 }]} 
             onPress={() => setPantallaActual('configuracion')}
           >
             <Text style={styles.textoBotonVolver}>Configuración ⚙️</Text>
@@ -499,7 +611,7 @@ export default function App() {
         <View style={styles.tarjetaCentrada}>
           <Text style={styles.tituloConfig}>Selecciona un Canal 🎛️</Text>
           <Text style={styles.subtituloBienvenida}>
-            Modo seleccionado: {modoComunicacion === 'radio' ? '🎙️ Radio' : '💬 Chat'}
+            Modo seleccionado: {modoComunicacion === 'radio' ? '🎙️ Radio PTT' : '💬 Chat'}
           </Text>
 
           {CANALES_PREDEFINIDOS.map((canal, index) => (
@@ -508,6 +620,13 @@ export default function App() {
               style={styles.botonCanalItem}
               onPress={() => {
                 setCanalActivo(canal);
+                if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+                  ws.current.send(JSON.stringify({
+                    type: 'join_channel',
+                    emisor: nombreUsuarioCompleto,
+                    sala: canal
+                  }));
+                }
                 setPantallaActual(modoComunicacion === 'radio' ? 'walkie' : 'chat');
               }}
             >
@@ -517,7 +636,7 @@ export default function App() {
           ))}
 
           <TouchableOpacity 
-            style={[styles.botonVolver, { marginTop: 25 }]} 
+            style={[styles.botonVolver, { marginTop: 20 }]} 
             onPress={() => setPantallaActual('hub')}
           >
             <Text style={styles.textoBotonVolver}>Volver al Menú</Text>
@@ -527,7 +646,82 @@ export default function App() {
     );
   }
 
-  // 💬 PANTALLA 4: CHAT
+  // 🚨 PANTALLA 4: GENERAR REPORTE
+  if (pantallaActual === 'reportes') {
+    const fechaHoraActual = new Date().toLocaleString('es-CL');
+
+    return (
+      <SafeAreaView style={styles.container}>
+        <ScrollView style={{ width: '100%' }} contentContainerStyle={{ paddingBottom: 20 }}>
+          <View style={styles.headerDisplay}>
+            <View style={styles.headerFilaSuperior}>
+              <Text style={styles.brandText}>🚨 Registro de Novedades</Text>
+              <TouchableOpacity onPress={() => setPantallaActual('hub')} style={styles.areaEngranaje}>
+                <Text style={styles.textoEngranaje}>🏠</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.choferTag}>Emisor: {nombreUsuarioCompleto}</Text>
+          </View>
+
+          <View style={[styles.tarjetaCentrada, { marginTop: 15 }]}>
+            <Text style={[styles.tituloConfig, { marginBottom: 15, fontSize: 18 }]}>Módulo de Reporte</Text>
+
+            <View style={{ width: '100%', marginBottom: 12 }}>
+              <Text style={{ color: '#a4b0be', fontSize: 12, marginBottom: 4 }}>Fecha y Hora Automática:</Text>
+              <TextInput style={styles.inputDisabled} value={fechaHoraActual} editable={false} />
+            </View>
+
+            <View style={{ width: '100%', marginBottom: 12 }}>
+              <Text style={{ color: '#a4b0be', fontSize: 12, marginBottom: 4 }}>Detalle de la Incidencia / Novedad:</Text>
+              <TextInput 
+                style={[styles.entradaTexto, { height: 90, borderRadius: 12, paddingTop: 10, textAlignVertical: 'top' }]}
+                placeholder="Escriba lo ocurrido..."
+                placeholderTextColor="#666"
+                multiline={true}
+                value={reportDescription}
+                onChangeText={setReportDescription}
+              />
+            </View>
+
+            <TouchableOpacity 
+              style={[styles.botonHubMenu, { marginBottom: 15, justifyContent: 'center' }]} 
+              onPress={tomarOSeleccionarFoto}
+            >
+              <Text style={{ fontSize: 18, marginRight: 8 }}>📷</Text>
+              <Text style={{ color: '#38bdf8', fontWeight: 'bold' }}>
+                {reportImageUri ? 'Cambiar fotografía' : 'Tomar foto o subir desde galería'}
+              </Text>
+            </TouchableOpacity>
+
+            {reportImageUri && (
+              <Image source={{ uri: reportImageUri }} style={styles.imagenPreviaReporte} />
+            )}
+
+            <TouchableOpacity 
+              style={[styles.botonVerde, { backgroundColor: '#d97706', height: 48, borderRadius: 12, marginTop: 10 }]} 
+              onPress={enviarReporteIncidencia}
+              disabled={isSubmittingReport}
+            >
+              {isSubmittingReport ? (
+                <ActivityIndicator color="#FFF" />
+              ) : (
+                <Text style={styles.textoBotonVerde}>ENVIAR REPORTE</Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={[styles.botonVolver, { marginTop: 12, height: 44, borderRadius: 12 }]} 
+              onPress={() => setPantallaActual('hub')}
+            >
+              <Text style={styles.textoBotonVolver}>Cancelar / Volver</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
+  // 💬 PANTALLA 5: CHAT DE TEXTO
   if (pantallaActual === 'chat') {
     const renderItemMensaje = ({ item }) => {
       const esMio = item.emisor === nombreUsuarioCompleto;
@@ -541,6 +735,8 @@ export default function App() {
         </View>
       );
     };
+
+    const totalUsuariosActivos = connectedUsers.length + 1;
 
     return (
       <SafeAreaView style={styles.container}>
@@ -556,6 +752,28 @@ export default function App() {
               </TouchableOpacity>
             </View>
             <Text style={styles.choferTag}>Usuario: {nombreUsuarioCompleto}</Text>
+
+            {/* 🟢 PANEL DE PRESENCIA REAL */}
+            <TouchableOpacity 
+              style={styles.barraPresencia} 
+              onPress={() => setShowUsersPanel(!showUsersPanel)}
+            >
+              <Text style={styles.textoPresencia}>
+                🟢 {totalUsuariosActivos} {totalUsuariosActivos === 1 ? 'Usuario activo' : 'Usuarios activos'} en la frecuencia
+              </Text>
+              <Text style={{ color: '#888', fontSize: 11 }}>{showUsersPanel ? '▲ Ocultar' : '▼ Ver quiénes'}</Text>
+            </TouchableOpacity>
+
+            {showUsersPanel && (
+              <View style={styles.dropdownPresencia}>
+                <Text style={styles.itemUsuarioPresencia}>🛡️ {nombreUsuarioCompleto} (Tú)</Text>
+                {connectedUsers.map((u, idx) => (
+                  <Text key={u.id || idx} style={styles.itemUsuarioPresencia}>
+                    🛡️ {u.nombre || u.name}
+                  </Text>
+                ))}
+              </View>
+            )}
           </View>
 
           <FlatList
@@ -586,14 +804,14 @@ export default function App() {
             style={[styles.botonHubMenu, { width: '100%', height: 46, borderRadius: 12, marginBottom: 10 }]} 
             onPress={() => setPantallaActual('walkie')}
           >
-            <Text style={{ fontSize: 15, color: '#ffffff', fontWeight: 'bold' }}>🎙️ Cambiar a Radio de este Canal</Text>
+            <Text style={{ fontSize: 14, color: '#ffffff', fontWeight: 'bold' }}>🎙️ Cambiar a Radio de este Canal</Text>
           </TouchableOpacity>
         </KeyboardAvoidingView>
       </SafeAreaView>
     );
   }
 
-  // ⚙️ PANTALLA 5: CONFIGURACIÓN
+  // ⚙️ PANTALLA 6: CONFIGURACIÓN
   if (pantallaActual === 'configuracion') {
     return (
       <SafeAreaView style={styles.container}>
@@ -601,13 +819,13 @@ export default function App() {
           <Text style={styles.tituloConfig}>Configuración ⚙️</Text>
           
           <View style={styles.seccionInfoEdicion}>
-            <Text style={styles.textoInfoLabel}>Identificación del Usuario</Text>
+            <Text style={styles.textoInfoLabel}>Identificación del Operador</Text>
             {isEditing ? (
               <TextInput
                 style={styles.entradaTextoEdicion}
                 value={nuevoNombre}
                 onChangeText={setNuevoNombre}
-                maxLength={15}
+                maxLength={25}
                 placeholder="Nuevo nombre..."
                 placeholderTextColor="#888"
               />
@@ -622,56 +840,72 @@ export default function App() {
               onPress={isEditing ? guardarNuevoNombre : () => setIsEditing(true)}
             >
               <Text style={styles.textoBotonVerde}>
-                {isEditing ? 'Guardar Cambios' : 'Editar Nombre'}
+                {isEditing ? 'Guardar Cambios' : 'Editar Nombre / Cargo'}
               </Text>
             </TouchableOpacity>
           </View>
 
           <View style={styles.seccionInfo}>
-            <Text style={styles.textoInfoLabel}>Versión de la App</Text>
-            <Text style={styles.textoInfoValor}>v1.1</Text>
+            <Text style={styles.textoInfoLabel}>Versión del Sistema</Text>
+            <Text style={styles.textoInfoValor}>Secoll v1.2 Enterprise</Text>
           </View>
 
           <View style={styles.seccionInfo}>
-            <Text style={styles.textoInfoLabel}>Desarrollador</Text>
-            <Text style={styles.textoInfoValorCed}>Dreama64</Text>
+            <Text style={styles.textoInfoLabel}>Estado del Servidor</Text>
+            <Text style={styles.textoInfoValorCed}>🟢 Operativo (Cloud)</Text>
           </View>
 
-          <TouchableOpacity style={styles.botonPayPal} onPress={abrirPayPal}>
-            <Text style={styles.textoBotonPayPal}>💳 Si deseas donarme por PayPal</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.botonMercadoPago} onPress={abrirMercadoPago}>
-            <Text style={styles.textoBotonPayPal}>🇨🇱 Aporte con Mercado Pago (Chile) 🇨🇱</Text>
-          </TouchableOpacity>
-
           <TouchableOpacity 
-            style={[styles.botonVolver, { marginTop: 10 }]} 
+            style={[styles.botonVolver, { marginTop: 30 }]} 
             onPress={() => {
               setIsEditing(false);
               setPantallaActual('hub');
             }}
           >
-            <Text style={styles.textoBotonVolver}>Volver al Menú</Text>
+            <Text style={styles.textoBotonVolver}>Volver al Menú Principal</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
     );
   }
 
-  // 📻 PANTALLA 6: RADIO WALKIE-TALKIE
+  // 📻 PANTALLA 7: RADIO WALKIE-TALKIE
   if (pantallaActual === 'walkie') {
+    const totalUsuariosActivos = connectedUsers.length + 1;
+
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.headerDisplay}>
           <View style={styles.headerFilaSuperior}>
-            <Text style={styles.brandText}>Secoll v1.1 • {canalActivo}</Text>
+            <Text style={styles.brandText}>Secoll v1.2 • {canalActivo}</Text>
             <TouchableOpacity onPress={() => setPantallaActual('hub')} style={styles.areaEngranaje}>
               <Text style={styles.textoEngranaje}>🏠</Text>
             </TouchableOpacity>
           </View>
           
           <Text style={styles.choferTag}>Usuario: {nombreUsuarioCompleto}</Text>
+
+          {/* 🟢 PANEL DE PRESENCIA REAL */}
+          <TouchableOpacity 
+            style={styles.barraPresencia} 
+            onPress={() => setShowUsersPanel(!showUsersPanel)}
+          >
+            <Text style={styles.textoPresencia}>
+              🟢 {totalUsuariosActivos} {totalUsuariosActivos === 1 ? 'Usuario activo' : 'Usuarios activos'} en la frecuencia
+            </Text>
+            <Text style={{ color: '#888', fontSize: 11 }}>{showUsersPanel ? '▲ Ocultar' : '▼ Ver quiénes'}</Text>
+          </TouchableOpacity>
+
+          {showUsersPanel && (
+            <View style={styles.dropdownPresencia}>
+              <Text style={styles.itemUsuarioPresencia}>🛡️ {nombreUsuarioCompleto} (Tú)</Text>
+              {connectedUsers.map((u, idx) => (
+                <Text key={u.id || idx} style={styles.itemUsuarioPresencia}>
+                  🛡️ {u.nombre || u.name}
+                </Text>
+              ))}
+            </View>
+          )}
 
           <View style={styles.signalContainer}>
             <View style={[styles.signalDot, { backgroundColor: statusColor }]} />
@@ -701,7 +935,7 @@ export default function App() {
           style={[styles.botonHubMenu, { width: '100%', height: 46, borderRadius: 12, marginBottom: 10 }]} 
           onPress={() => setPantallaActual('chat')}
         >
-          <Text style={{ fontSize: 15, color: '#ffffff', fontWeight: 'bold' }}>💬 Cambiar a Chat de este Canal</Text>
+          <Text style={{ fontSize: 14, color: '#ffffff', fontWeight: 'bold' }}>💬 Cambiar a Chat de este Canal</Text>
         </TouchableOpacity>
 
         <View style={styles.footer}>
@@ -711,10 +945,19 @@ export default function App() {
     );
   }
 
+  // 🚀 PANTALLA DE CARGA / SPLASH MEJORADA (4 SEGUNDOS)
   return (
     <View style={[styles.container, styles.centradoTotal]}>
-      <Text style={[styles.brandTitleText, { marginBottom: 20 }]}>Secoll Communications</Text>
-      <ActivityIndicator size="large" color="#2ed573" />
+      <Text style={[styles.brandTitleText, { marginBottom: 10, fontSize: 26 }]}>
+        Secoll Communications
+      </Text>
+      <Text style={{ color: '#a4b0be', fontSize: 13, marginBottom: 30, letterSpacing: 1, textAlign: 'center' }}>
+        SISTEMA OPERATIVO DE CONTROL Y TERRENO
+      </Text>
+      <ActivityIndicator size="large" color="#2ed573" style={{ marginBottom: 15 }} />
+      <Text style={{ color: '#57606f', fontSize: 11, fontWeight: 'bold', letterSpacing: 1 }}>
+        CONECTANDO CON SERVIDOR CENTRAL...
+      </Text>
     </View>
   );
 }
@@ -737,7 +980,7 @@ const styles = StyleSheet.create({
     width: '100%',
     backgroundColor: '#1c2029',
     borderRadius: 20,
-    padding: 25,
+    padding: 22,
     alignItems: 'center',
     borderWidth: 1,
     borderColor: '#2d3446',
@@ -786,11 +1029,43 @@ const styles = StyleSheet.create({
     marginBottom: 5,
     letterSpacing: 1,
   },
+  barraPresencia: {
+    width: '100%',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#141821',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    marginTop: 6,
+    borderWidth: 1,
+    borderColor: '#262c3a',
+  },
+  textoPresencia: {
+    color: '#2ed573',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  dropdownPresencia: {
+    width: '100%',
+    backgroundColor: '#141821',
+    borderRadius: 8,
+    padding: 10,
+    marginTop: 4,
+    borderWidth: 1,
+    borderColor: '#262c3a',
+  },
+  itemUsuarioPresencia: {
+    color: '#cbd5e1',
+    fontSize: 12,
+    paddingVertical: 3,
+  },
   signalContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 5,
+    marginTop: 8,
   },
   signalDot: {
     width: 10,
@@ -811,9 +1086,9 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   btnHablar: {
-    width: 200,
-    height: 200,
-    borderRadius: 100,
+    width: 190,
+    height: 190,
+    borderRadius: 95,
     borderWidth: 8,
     alignItems: 'center',
     justifyContent: 'center',
@@ -863,16 +1138,16 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   subtituloBienvenida: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#a4b0be',
     textAlign: 'center',
-    marginBottom: 25,
+    marginBottom: 20,
   },
   tituloConfig: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: 'bold',
     color: '#ffffff',
-    marginBottom: 25,
+    marginBottom: 20,
   },
   seccionInfo: {
     width: '100%',
@@ -913,15 +1188,26 @@ const styles = StyleSheet.create({
   },
   entradaTexto: {
     width: '100%',
-    height: 50,
+    height: 48,
     backgroundColor: '#1e2432',
-    borderRadius: 25,
+    borderRadius: 24,
     paddingHorizontal: 20,
-    fontSize: 16,
+    fontSize: 15,
     color: '#ffffff',
-    marginBottom: 20,
+    marginBottom: 15,
     borderWidth: 1,
     borderColor: '#2d3446',
+  },
+  inputDisabled: {
+    width: '100%',
+    height: 44,
+    backgroundColor: '#141821',
+    borderRadius: 10,
+    paddingHorizontal: 15,
+    fontSize: 14,
+    color: '#888',
+    borderWidth: 1,
+    borderColor: '#262c3a',
   },
   entradaTextoEdicion: {
     width: '100%',
@@ -948,15 +1234,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   iconoHubMenu: {
-    fontSize: 28,
-    marginRight: 15,
+    fontSize: 26,
+    marginRight: 12,
   },
   contenedorTextoHub: {
     flex: 1,
     alignItems: 'flex-start',
   },
   tituloBotonHub: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: 'bold',
     color: '#ffffff',
   },
@@ -971,8 +1257,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     backgroundColor: '#1e2432',
-    paddingVertical: 15,
-    paddingHorizontal: 20,
+    paddingVertical: 14,
+    paddingHorizontal: 18,
     borderRadius: 12,
     marginBottom: 10,
     borderWidth: 1,
@@ -980,7 +1266,7 @@ const styles = StyleSheet.create({
   },
   textoBotonCanalItem: {
     color: '#ffffff',
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
   },
   textoFlechaCanal: {
@@ -993,43 +1279,18 @@ const styles = StyleSheet.create({
     borderRadius: 25,
     justifyContent: 'center',
     alignItems: 'center',
+    height: 48,
   },
   textoBotonVerde: {
     color: '#ffffff',
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: 'bold',
-  },
-  botonPayPal: {
-    width: '100%',
-    height: 50,
-    backgroundColor: '#003087',
-    borderRadius: 25,
-    justifycontent: 'center',
-    alignItems: 'center',
-    marginTop: 20,
-    marginBottom: 10,
-  },
-  botonMercadoPago: {
-    width: '100%',
-    height: 50,
-    backgroundColor: '#009ee3',
-    borderRadius: 25,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  textoBotonPayPal: {
-    color: '#ffffff',
-    fontSize: 14,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    paddingHorizontal: 10,
   },
   botonVolver: {
     width: '100%',
-    height: 50,
+    height: 48,
     backgroundColor: '#2d3446',
-    borderRadius: 25,
+    borderRadius: 24,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -1037,6 +1298,13 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 15,
     fontWeight: 'bold',
+  },
+  imagenPreviaReporte: {
+    width: '100%',
+    height: 160,
+    borderRadius: 12,
+    marginBottom: 12,
+    resizeMode: 'cover',
   },
   listaChatContainer: {
     flex: 1,
