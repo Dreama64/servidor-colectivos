@@ -4,7 +4,6 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const WebSocket = require('ws');
-const nodemailer = require('nodemailer');
 
 const app = express();
 const server = http.createServer(app);
@@ -19,14 +18,14 @@ if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir);
 }
 
-// Configuración de almacenamiento con Multer (para audio e imágenes de reporte)
+// Configuración de almacenamiento con Multer (para audio e imágenes)
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, uploadsDir);
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const ext = path.extname(file.originalname) || (file.mimetype.includes('image') ? '.jpg' : '.m4a');
+    const ext = path.extname(file.originalname) || (file.mimetype && file.mimetype.includes('image') ? '.jpg' : '.m4a');
     cb(null, 'file-' + uniqueSuffix + ext);
   }
 });
@@ -52,15 +51,6 @@ app.use('/uploads', express.static(uploadsDir, {
     }
   }
 }));
-
-// Configuración del servicio de correo (Reemplazar con tus credenciales o variables de entorno)
-const transporter = nodemailer.createTransport({
-  service: 'gmail', // O usar servidor SMTP de la empresa/fundo
-  auth: {
-    user: process.env.EMAIL_USER || 'alertas.fundo.secoll@gmail.com',
-    pass: process.env.EMAIL_PASS || 'tu_password_de_aplicacion' 
-  }
-});
 
 // -------------------------------------------------------------
 // ENDPOINT 1: Subida y Retransmisión de Audio
@@ -97,42 +87,20 @@ app.post('/upload', upload.single('audio'), (req, res) => {
 });
 
 // -------------------------------------------------------------
-// ENDPOINT 2: Recepción de Reportes de Incidencia y Envío por Correo
+// ENDPOINT 2: Recepción de Reportes (Registra foto y datos)
 // -------------------------------------------------------------
-app.post('/report', upload.single('photo'), async (req, res) => {
+app.post('/report', upload.single('photo'), (req, res) => {
   try {
     const { author, dateTime, description } = req.body;
     const photoFile = req.file;
 
-    console.log(`🚨 Nuevo reporte recibido de: ${author}`);
+    console.log(`🚨 NUEVO REPORTE EN TRÁMITE:`);
+    console.log(`- Emisor: ${author}`);
+    console.log(`- Fecha: ${dateTime}`);
+    console.log(`- Detalle: ${description}`);
+    if (photoFile) console.log(`- Evidencia recibida: ${photoFile.filename}`);
 
-    const mailOptions = {
-      from: '"Secoll Alertas" <alertas.fundo.secoll@gmail.com>',
-      to: process.env.ADMIN_EMAIL || 'administracion@fundo.cl', // Destinatario
-      subject: `🚨 REPORTE DE INCIDENCIA - ${author}`,
-      html: `
-        <h2>Nuevo Reporte desde Terreno</h2>
-        <p><strong>Guardia / Emisor:</strong> ${author}</p>
-        <p><strong>Fecha y Hora:</strong> ${dateTime}</p>
-        <p><strong>Detalle de la Incidencia:</strong></p>
-        <blockquote style="background: #f4f4f4; padding: 10px; border-left: 4px solid #d97706;">
-          ${description}
-        </blockquote>
-      `,
-      attachments: photoFile ? [{
-        filename: photoFile.originalname || 'evidencia.jpg',
-        path: photoFile.path
-      }] : []
-    };
-
-    // Intentar enviar correo (Si falla, responde exitoso para la app de demostración)
-    try {
-      await transporter.sendMail(mailOptions);
-    } catch (mailErr) {
-      console.warn("⚠️ No se pudo enviar el email real (revisar credenciales SMTP), pero el reporte fue registrado localmente.");
-    }
-
-    return res.status(200).json({ success: true, message: 'Reporte procesado correctamente' });
+    return res.status(200).json({ success: true, message: 'Reporte procesado exitosamente' });
 
   } catch (error) {
     console.error('Error en /report:', error);
@@ -145,14 +113,13 @@ app.get('/', (req, res) => {
 });
 
 // -------------------------------------------------------------
-// GESTIÓN DE WEBSOCKETS Y PRESENCIA EN TIEMPO REAL
+// GESTIÓN DE WEBSOCKETS Y PRESENCIA REAL DE USUARIOS
 // -------------------------------------------------------------
 
-// Mapa para rastrear los datos de cada cliente: { wsClient: { nombre, canal } }
+// Mapa para rastrear los datos de cada cliente conectado
 const clientsMap = new Map();
 
 function transmitirListaUsuarios(canalActual) {
-  // Filtrar los usuarios que pertenecen a este canal en específico
   const usuariosEnCanal = [];
   
   clientsMap.forEach((data, clientWs) => {
@@ -172,7 +139,6 @@ function transmitirListaUsuarios(canalActual) {
     usuarios: usuariosEnCanal
   });
 
-  // Reenviar la lista actualizada a todos los conectados en esa sala
   clientsMap.forEach((data, clientWs) => {
     if (clientWs.readyState === WebSocket.OPEN && data.canal === canalActual) {
       clientWs.send(payload);
@@ -183,14 +149,13 @@ function transmitirListaUsuarios(canalActual) {
 wss.on('connection', (ws) => {
   console.log('Cliente conectado por WebSocket 🟢');
   
-  // Registrar cliente con datos iniciales
   clientsMap.set(ws, { id: Date.now().toString(), nombre: 'Guardia', canal: 'General' });
 
   ws.on('message', (message) => {
     try {
       const data = JSON.parse(message);
 
-      // 1. REGISTRO / CAMBIO DE CANAL DEL USUARIO
+      // 1. REGISTRO O CAMBIO DE CANAL
       if (data.type === 'join_channel' || data.emisor || data.canal || data.sala) {
         const clientInfo = clientsMap.get(ws) || {};
         const canalAnterior = clientInfo.canal;
@@ -200,14 +165,13 @@ wss.on('connection', (ws) => {
         
         clientsMap.set(ws, clientInfo);
 
-        // Notificar presencia en el canal actual (y en el anterior si cambió de sala)
         transmitirListaUsuarios(clientInfo.canal);
         if (canalAnterior && canalAnterior !== clientInfo.canal) {
           transmitirListaUsuarios(canalAnterior);
         }
       }
 
-      // 2. REENVIAR MENSAJES DE TEXTO Y OTROS EVENTOS
+      // 2. REENVIAR MENSAJES Y CHATS
       wss.clients.forEach((client) => {
         if (client.readyState === WebSocket.OPEN) {
           client.send(JSON.stringify(data));
@@ -215,7 +179,6 @@ wss.on('connection', (ws) => {
       });
 
     } catch (e) {
-      // Reenvío de datos binarios o texto plano
       wss.clients.forEach((client) => {
         if (client.readyState === WebSocket.OPEN) {
           client.send(message.toString());
